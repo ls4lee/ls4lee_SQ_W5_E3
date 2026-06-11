@@ -11,38 +11,44 @@
 
 // ------------------------------------------------------------
 // SPRITE CONFIGURATION — Walking Character
-// Same structure as Example 1. See that file for full notes.
+// Since our setup function will dynamically rebuild the layout
+// into a clean 4-row, 2-column sheet, we can use simple row indices!
 // ------------------------------------------------------------
 const SPRITE = {
-  frameWidth:  75,
-  frameHeight: 150,
-  numFrames:   4,
-  animSpeed:   20,
-  scale:       0.5,
+  frameWidth:  100, // Width of one Ness frame
+  frameHeight: 130, // Height of one Ness frame
+  numFrames:   2,   // 2 alternating frames per row loop
+  animSpeed:   10,  // Dropped to 15 for snappier 2-frame steps
+  scale:       0.5,   // Set to 1 for full size (can adjust to scale up/down)
+
+  // Clean uniform rows mapping after our setup translation
   rows: {
     down:  0,
     up:    1,
     right: 2,
     left:  3,
   },
+
+  // No offsets needed because this rip aligns beautifully
   offsets: {
-    down:  { x: 0, y: 0  },
-    up:    { x: 0, y: 0  },
-    right: { x: 0, y: 10 },
-    left:  { x: 0, y: 20 },
+    down:  { x: -7, y: 0 },
+    up:    { x: -3, y: 0 },
+    right: { x: -4, y: 0 },
+    left:  { x: -3, y: 0 },
   },
 };
 
 // ------------------------------------------------------------
-// COIN CONFIGURATION
-// Same structure as Example 2. See that file for full notes.
+// COIN SPRITE CONFIGURATION
+// Coin sheet: 256 x 32px — 8 frames in a single row.
+// Adjust these values to match your own sprite sheet.
 // ------------------------------------------------------------
 const COIN = {
-  frameWidth:  32,
-  frameHeight: 32,
-  numFrames:   8,
-  animSpeed:   6,
-  scale:       1.5,
+  frameWidth:  200,  // 256px total / 8 frames
+  frameHeight: 600,  // only one row, full sheet height
+  numFrames:   6,   // 8 frames of spin animation
+  animSpeed:   6,   // draw() frames per sprite frame (lower = faster)
+  scale:       0.1, // scale up so the coin is visible on screen
 };
 
 // ------------------------------------------------------------
@@ -91,13 +97,13 @@ const TILE_COLORS = {
 let player = {
   x: 0,
   y: 0,
-  speed: 2,
+  speed: 3, 
 
   // Animation state
-  currentFrame: 0,
-  frameTimer:   0,
-  direction:    "down",
-  isMoving:     false,
+  currentFrame: 0,      
+  frameTimer:   0,      
+  direction:    "down", 
+  isMoving:     false,  
 
   // Collision box half-dimensions
   // Smaller than the sprite so the player can navigate tight corridors
@@ -119,30 +125,56 @@ let coinsCollected = 0;
 let gameWon = false;
 
 // Images
-let characterSheet;
-let coinSheet;
+let originalSheet;  // Stores the raw asset unedited
+let characterSheet; // The newly constructed 4x2 offscreen graphics canvas
+let coinSheet; // the loaded coin sprite sheet image
 
 // ============================================================
 // preload()
-// Runs once before setup(). Loads both sprite sheets so they
+// Runs once before setup(). Always load images here so they
 // are ready before the sketch tries to use them.
 // ============================================================
 function preload() {
-  characterSheet = loadImage("assets/images/walking.png");
-  coinSheet      = loadImage("assets/images/coin_gold.png");
+  originalSheet = loadImage("assets/images/nesswalking.png");
+  coinSheet = loadImage("assets/images/coinanimation.png");
 }
 
 // ============================================================
 // setup()
-// Runs once at the very start of the sketch.
-// Canvas size is calculated from the maze dimensions so it
-// always fits exactly. Loops through the maze to find the
-// start tile and all coin tiles.
+// Creates the canvas and maps the custom left-half pieces 
+// into a standard stacked row architecture.
 // ============================================================
 function setup() {
   // Size the canvas to fit the maze exactly
   createCanvas(TILE_SIZE * MAZE[0].length, TILE_SIZE * MAZE.length);
   imageMode(CENTER);
+
+  // Calculate true frame size dynamically based on the file dimensions
+  let w = originalSheet.width / 8;
+  let h = originalSheet.height / 2;
+
+  SPRITE.frameWidth = w;
+  SPRITE.frameHeight = h;
+
+  // Create the offscreen graphics canvas buffer
+  characterSheet = createGraphics(w * 2, h * 4);
+
+  // FINE-TUNING ALIGNMENT:
+  // We shift the destination Y (dy) down by 6 pixels for Rows 0 and 2 
+  // to match the lower resting position of Rows 1 and 3.
+  let shiftY = 12; 
+
+  // Row 0: Down (Shifted down by shiftY)
+  characterSheet.copy(originalSheet, 0 * w, 0 * h, w * 2, h, 0 * w, (0 * h) + shiftY, w * 2, h);
+  
+  // Row 1: Up (Kept at its original natural lower height)
+  characterSheet.copy(originalSheet, 0 * w, 1 * h, w * 2, h, 0 * w, 1 * h, w * 2, h);
+  
+  // Row 2: Right (Shifted down by shiftY)
+  characterSheet.copy(originalSheet, 2 * w, 0 * h, w * 2, h, 0 * w, (2 * h) + shiftY, w * 2, h);
+  
+  // Row 3: Left (Kept at its original natural lower height)
+  characterSheet.copy(originalSheet, 2 * w, 1 * h, w * 2, h, 0 * w, 3 * h, w * 2, h);
 
   // Scan the maze array to find the start position and coin locations
   for (let row = 0; row < MAZE.length; row++) {
@@ -238,6 +270,7 @@ function updateCoins() {
   for (let i = 0; i < coins.length; i++) {
     if (coins[i].collected) continue; // skip collected coins
 
+    // Advance the animation timer each frame
     coins[i].frameTimer++;
     if (coins[i].frameTimer >= COIN.animSpeed) {
       coins[i].frameTimer = 0;
@@ -249,7 +282,9 @@ function updateCoins() {
 // ------------------------------------------------------------
 // drawCoins()
 // Loops through every coin and draws it at its current frame.
-// Skips coins that have already been collected.
+// Coins only have one row so sy (source y) is always 0.
+// sx slides along the row by multiplying the frame number
+// by frameWidth — the same pattern as the walking character.
 // ------------------------------------------------------------
 function drawCoins() {
   for (let i = 0; i < coins.length; i++) {
@@ -260,10 +295,20 @@ function drawCoins() {
     // Source x position on the sprite sheet
     // Coins have only one row so sy is always 0
     let sx = coin.frame * COIN.frameWidth;
+    let sy = 0;
+
+    // Draw size (original frame size multiplied by scale)
     let dw = COIN.frameWidth  * COIN.scale;
     let dh = COIN.frameHeight * COIN.scale;
 
-    image(coinSheet, coin.x, coin.y, dw, dh, sx, 0, COIN.frameWidth, COIN.frameHeight);
+    image(
+      coinSheet,
+      coin.x, coin.y, // destination centre position
+      dw, dh,         // destination size (scaled)
+      sx, sy,         // source position on sheet
+      COIN.frameWidth,  // source width  (one frame)
+      COIN.frameHeight, // source height (one row)
+    );
   }
 }
 
@@ -421,33 +466,27 @@ function animateSprite() {
 
 // ------------------------------------------------------------
 // drawCharacter()
-// Draws one frame from the sprite sheet using image() with
-// source rectangle parameters.
-//
-// image(img, dx, dy, dw, dh, sx, sy, sw, sh)
-//   dx, dy — where to draw on the canvas (destination centre)
-//   dw, dh — how large to draw it (destination size)
-//   sx, sy — where to start reading from the sprite sheet
-//   sw, sh — how many pixels to read from the sheet
-//
-// sx slides along the row by multiplying frame number by
-// frameWidth. sy selects the row by multiplying the row
-// index by frameHeight.
+// Uses standard grid sampling because our sheet was flattened to 4x2
 // ------------------------------------------------------------
 function drawCharacter() {
-  // Get the correct row and offset for the current direction
   let row    = SPRITE.rows[player.direction];
   let offset = SPRITE.offsets[player.direction];
 
-  // Source position on the sprite sheet (with offset applied)
-  let sx = (player.currentFrame * SPRITE.frameWidth)  + offset.x;
-  let sy = (row                 * SPRITE.frameHeight) + offset.y;
+  // Map perfectly over the generated clean 4x2 coordinate tracking system
+  let sx = player.currentFrame * SPRITE.frameWidth  + offset.x;
+  let sy = row                 * SPRITE.frameHeight + offset.y;
 
-  // Draw size (original frame size multiplied by scale)
   let dw = SPRITE.frameWidth  * SPRITE.scale;
   let dh = SPRITE.frameHeight * SPRITE.scale;
 
-  image(characterSheet, player.x, player.y, dw, dh, sx, sy, SPRITE.frameWidth, SPRITE.frameHeight);
+  image(
+    characterSheet, // Reads directly from the constructed canvas graphics buffer
+    player.x, player.y, 
+    dw, dh,             
+    sx, sy,             
+    SPRITE.frameWidth,  
+    SPRITE.frameHeight  
+  );
 }
 
 // ------------------------------------------------------------
